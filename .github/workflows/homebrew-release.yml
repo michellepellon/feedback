@@ -1,0 +1,45 @@
+name: Update Homebrew Formula
+
+on:
+  release:
+    types: [published]
+
+jobs:
+  update-homebrew:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Get release info
+        id: release
+        run: |
+          VERSION="${GITHUB_REF#refs/tags/}"
+          echo "version=${VERSION}" >> $GITHUB_OUTPUT
+          echo "version_num=${VERSION#v}" >> $GITHUB_OUTPUT
+
+      - name: Download release tarball and calculate SHA256
+        id: sha
+        run: |
+          curl -sL "https://github.com/${{ github.repository }}/archive/refs/tags/${{ steps.release.outputs.version }}.tar.gz" -o release.tar.gz
+          SHA256=$(sha256sum release.tar.gz | cut -d ' ' -f 1)
+          echo "sha256=${SHA256}" >> $GITHUB_OUTPUT
+
+      - name: Checkout homebrew-tap
+        uses: actions/checkout@v4
+        with:
+          repository: michellepellon/homebrew-tap
+          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          path: homebrew-tap
+
+      - name: Update formula
+        run: |
+          cd homebrew-tap
+          sed -i 's|url "https://github.com/michellepellon/feedback/archive/refs/tags/.*\.tar\.gz"|url "https://github.com/michellepellon/feedback/archive/refs/tags/${{ steps.release.outputs.version }}.tar.gz"|' Formula/feedback.rb
+          sed -i 's|sha256 ".*"|sha256 "${{ steps.sha.outputs.sha256 }}"|' Formula/feedback.rb
+
+      - name: Commit and push
+        run: |
+          cd homebrew-tap
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add Formula/feedback.rb
+          git commit -m "Update feedback to ${{ steps.release.outputs.version }}"
+          git push
