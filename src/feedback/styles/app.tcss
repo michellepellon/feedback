@@ -1,0 +1,115 @@
+/* Feedback Application Styles */
+
+/* Color scheme - Dark theme */
+$primary: #7c3aed;
+$accent: #a78bfa;
+$surface: #1e1e2e;
+$background: #11111b;
+$text: #cdd6f4;
+$text-muted: #6c7086;
+$success: #a6e3a1;
+$warning: #f9e2af;
+$error: #f38ba8;
+
+/* Base screen styling */
+Screen {
+    background: $background;
+    color: $text;
+}
+
+/* Header styling */
+Header {
+    background: $surface;
+    color: $text;
+    dock: top;
+    height: 1;
+}
+
+/* Footer styling */
+Footer {
+    background: $surface;
+    dock: bottom;
+}
+
+/* Main content layout */
+#main-content {
+    width: 100%;
+    height: 1fr;
+}
+
+#left-pane {
+    width: 1fr;
+    min-width: 30;
+    max-width: 50;
+    height: 100%;
+}
+
+#right-pane {
+    width: 2fr;
+    height: 100%;
+}
+
+/* Queue and Downloads screens */
+#queue-content, #downloads-content {
+    width: 100%;
+    height: 1fr;
+    padding: 0 1;
+}
+
+#queue-title, #downloads-title {
+    height: 1;
+    text-style: bold;
+    color: $accent;
+    padding: 0 1;
+    margin-bottom: 1;
+}
+
+/* Option list styling for all list widgets */
+OptionList {
+    background: $background;
+    border: solid $primary;
+    scrollbar-background: $surface;
+    scrollbar-color: $primary;
+}
+
+OptionList:focus {
+    border: solid $accent;
+}
+
+OptionList > .option-list--option {
+    padding: 0 1;
+}
+
+OptionList > .option-list--option-highlighted {
+    background: $accent;
+    color: $background;
+}
+
+/* Progress bar styling */
+ProgressBar {
+    padding: 0;
+}
+
+ProgressBar Bar {
+    color: $primary;
+}
+
+ProgressBar Bar > .bar--bar {
+    color: $accent;
+}
+
+/* Static text styling */
+Static {
+    background: transparent;
+}
+
+/* Label styling */
+Label {
+    background: transparent;
+}
+
+/* Notifications */
+Toast {
+    background: $surface;
+    border: solid $primary;
+}

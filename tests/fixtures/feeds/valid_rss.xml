@@ -1,0 +1,30 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Test Podcast</title>
+    <description>A test podcast for unit testing</description>
+    <link>https://example.com/podcast</link>
+    <lastBuildDate>Mon, 01 Jan 2024 12:00:00 +0000</lastBuildDate>
+    <copyright>2024 Test Author</copyright>
+    <item>
+      <title>Episode 1</title>
+      <description>First episode description</description>
+      <link>https://example.com/ep1</link>
+      <enclosure url="https://example.com/ep1.mp3" type="audio/mpeg" length="12345678"/>
+      <pubDate>Sun, 31 Dec 2023 10:00:00 +0000</pubDate>
+    </item>
+    <item>
+      <title>Episode 2</title>
+      <description>Second episode description</description>
+      <link>https://example.com/ep2</link>
+      <enclosure url="https://example.com/ep2.mp3" type="audio/mpeg" length="23456789"/>
+      <pubDate>Sat, 30 Dec 2023 10:00:00 +0000</pubDate>
+      <copyright>Episode 2 copyright</copyright>
+    </item>
+    <item>
+      <title>No Enclosure Episode</title>
+      <description>This episode has no enclosure</description>
+      <link>https://example.com/noenc</link>
+    </item>
+  </channel>
+</rss>
