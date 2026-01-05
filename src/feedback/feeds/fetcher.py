@@ -171,33 +171,73 @@ class FeedFetcher:
 
         return results
 
-    async def _fetch_content(self, url: str) -> bytes:
-        """Fetch raw content from URL.
+    async def _fetch_content(
+        self,
+        url: str,
+        *,
+        max_retries: int = 3,
+        base_delay: float = 1.0,
+    ) -> bytes:
+        """Fetch raw content from URL with retry logic.
 
         Args:
             url: URL to fetch.
+            max_retries: Maximum number of retry attempts.
+            base_delay: Base delay between retries (doubles each retry).
 
         Returns:
             Raw content bytes.
 
         Raises:
-            FeedFetchError: If fetching fails.
+            FeedFetchError: If fetching fails after all retries.
         """
-        try:
-            async with httpx.AsyncClient(
-                timeout=self.timeout,
-                follow_redirects=True,
-                headers={"User-Agent": self.user_agent},
-            ) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                return response.content
-        except httpx.TimeoutException as e:
-            raise FeedFetchError(url, "Request timed out") from e
-        except httpx.HTTPStatusError as e:
-            raise FeedFetchError(url, f"HTTP {e.response.status_code}") from e
-        except httpx.RequestError as e:
-            raise FeedFetchError(url, str(e)) from e
+        last_error: Exception | None = None
+
+        for attempt in range(max_retries + 1):
+            try:
+                async with httpx.AsyncClient(
+                    timeout=self.timeout,
+                    follow_redirects=True,
+                    headers={"User-Agent": self.user_agent},
+                ) as client:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    return response.content
+
+            except httpx.TimeoutException as e:
+                last_error = e
+                # Retry on timeout
+                if attempt < max_retries:
+                    delay = base_delay * (2**attempt)
+                    await asyncio.sleep(delay)
+                    continue
+                raise FeedFetchError(url, "Request timed out after retries") from e
+
+            except httpx.HTTPStatusError as e:
+                # Don't retry on 4xx errors (client errors)
+                if 400 <= e.response.status_code < 500:
+                    raise FeedFetchError(url, f"HTTP {e.response.status_code}") from e
+                # Retry on 5xx errors (server errors)
+                last_error = e
+                if attempt < max_retries:
+                    delay = base_delay * (2**attempt)
+                    await asyncio.sleep(delay)
+                    continue
+                raise FeedFetchError(
+                    url, f"HTTP {e.response.status_code} after retries"
+                ) from e
+
+            except httpx.RequestError as e:
+                last_error = e
+                # Retry on connection errors
+                if attempt < max_retries:
+                    delay = base_delay * (2**attempt)
+                    await asyncio.sleep(delay)
+                    continue
+                raise FeedFetchError(url, f"{e} (after retries)") from e
+
+        # Should not reach here, but handle it
+        raise FeedFetchError(url, str(last_error) if last_error else "Unknown error")
 
     def _parse_feed(self, url: str, content: bytes) -> tuple[Feed, list[Episode]]:
         """Parse feed content into Feed and Episode objects.

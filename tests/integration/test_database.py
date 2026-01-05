@@ -576,3 +576,154 @@ class TestFeedStartPosition:
         assert result is not None
         assert result.title == "Updated"
         assert result.start_position_ms == 45000
+
+
+class TestPlaybackHistory:
+    """Tests for playback history operations."""
+
+    @pytest.mark.asyncio
+    async def test_add_to_history(self, database: Database):
+        """Test adding an episode to playback history."""
+        await database.upsert_feed(Feed(key="feed1", title="Test Feed"))
+        episode = Episode(
+            feed_key="feed1",
+            title="Test Episode",
+            enclosure="http://example.com/ep.mp3",
+        )
+        await database.upsert_episode(episode)
+
+        # Get episode ID
+        episodes = await database.get_episodes("feed1")
+        ep_id = episodes[0].id
+        assert ep_id is not None
+
+        # Add to history
+        history_item = await database.add_to_history(ep_id, duration_listened_ms=60000)
+
+        assert history_item.episode_id == ep_id
+        assert history_item.duration_listened_ms == 60000
+        assert history_item.id is not None
+
+    @pytest.mark.asyncio
+    async def test_get_history(self, database: Database):
+        """Test retrieving playback history."""
+        await database.upsert_feed(Feed(key="feed1", title="Test Feed"))
+        episode = Episode(
+            feed_key="feed1",
+            title="Test Episode",
+            enclosure="http://example.com/ep.mp3",
+        )
+        await database.upsert_episode(episode)
+
+        episodes = await database.get_episodes("feed1")
+        ep_id = episodes[0].id
+        assert ep_id is not None
+
+        await database.add_to_history(ep_id, duration_listened_ms=30000)
+
+        history = await database.get_history(limit=50)
+
+        assert len(history) == 1
+        hist_item, ep = history[0]
+        assert hist_item.episode_id == ep_id
+        assert hist_item.duration_listened_ms == 30000
+        assert ep.title == "Test Episode"
+
+    @pytest.mark.asyncio
+    async def test_get_history_ordered_by_time(self, database: Database):
+        """Test that history is ordered by played_at descending."""
+        await database.upsert_feed(Feed(key="feed1", title="Test Feed"))
+
+        for i in range(3):
+            episode = Episode(
+                feed_key="feed1",
+                title=f"Episode {i+1}",
+                enclosure=f"http://example.com/ep{i+1}.mp3",
+            )
+            await database.upsert_episode(episode)
+
+        episodes = await database.get_episodes("feed1")
+
+        # Add in order - save episode IDs by title
+        ep_by_title = {ep.title: ep for ep in episodes}
+
+        # Add in specific order: 1, 2, 3
+        for title in ["Episode 1", "Episode 2", "Episode 3"]:
+            ep = ep_by_title[title]
+            assert ep.id is not None
+            await database.add_to_history(ep.id)
+
+        history = await database.get_history(limit=50)
+
+        # Should be in reverse order (newest first): 3, 2, 1
+        assert len(history) == 3
+        # The last added (Episode 3) should be first in history
+        assert history[0][1].title == "Episode 3"
+        assert history[1][1].title == "Episode 2"
+        assert history[2][1].title == "Episode 1"
+
+    @pytest.mark.asyncio
+    async def test_get_history_respects_limit(self, database: Database):
+        """Test that history limit is respected."""
+        await database.upsert_feed(Feed(key="feed1", title="Test Feed"))
+
+        for i in range(5):
+            episode = Episode(
+                feed_key="feed1",
+                title=f"Episode {i+1}",
+                enclosure=f"http://example.com/ep{i+1}.mp3",
+            )
+            await database.upsert_episode(episode)
+
+        episodes = await database.get_episodes("feed1")
+        for ep in episodes:
+            assert ep.id is not None
+            await database.add_to_history(ep.id)
+
+        history = await database.get_history(limit=3)
+        assert len(history) == 3
+
+    @pytest.mark.asyncio
+    async def test_clear_history(self, database: Database):
+        """Test clearing all playback history."""
+        await database.upsert_feed(Feed(key="feed1", title="Test Feed"))
+        episode = Episode(
+            feed_key="feed1",
+            title="Test Episode",
+            enclosure="http://example.com/ep.mp3",
+        )
+        await database.upsert_episode(episode)
+
+        episodes = await database.get_episodes("feed1")
+        ep_id = episodes[0].id
+        assert ep_id is not None
+
+        await database.add_to_history(ep_id)
+        await database.add_to_history(ep_id)
+
+        count = await database.clear_history()
+        assert count == 2
+
+        history = await database.get_history()
+        assert len(history) == 0
+
+    @pytest.mark.asyncio
+    async def test_add_to_history_not_connected(self, temp_db_path: Path):
+        """Test add_to_history raises when not connected."""
+        db = Database(temp_db_path)
+        with pytest.raises(RuntimeError, match="not connected"):
+            await db.add_to_history(1)
+
+    @pytest.mark.asyncio
+    async def test_get_history_not_connected(self, temp_db_path: Path):
+        """Test get_history raises when not connected."""
+        db = Database(temp_db_path)
+        with pytest.raises(RuntimeError, match="not connected"):
+            await db.get_history()
+
+    @pytest.mark.asyncio
+    async def test_clear_history_not_connected(self, temp_db_path: Path):
+        """Test clear_history raises when not connected."""
+        db = Database(temp_db_path)
+        with pytest.raises(RuntimeError, match="not connected"):
+            await db.clear_history()

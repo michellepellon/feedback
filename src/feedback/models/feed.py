@@ -108,3 +108,16 @@ class QueueItem(BaseModel):
 
     position: int = Field(description="Position in queue (1-indexed)")
     episode_id: int = Field(description="Episode database ID")
+
+
+class HistoryItem(BaseModel):
+    """An item in the playback history."""
+
+    model_config = ConfigDict(frozen=True)
+
+    id: int | None = Field(default=None, description="Database ID")
+    episode_id: int = Field(description="Episode database ID")
+    played_at: datetime = Field(description="When the episode was played")
+    duration_listened_ms: int = Field(
+        default=0, description="Total duration listened in milliseconds"
+    )

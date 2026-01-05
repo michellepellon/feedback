@@ -107,6 +107,7 @@ class PrimaryScreen(Screen[None]):
         Binding("-", "volume_down", "Vol-", show=False),
         Binding("]", "speed_up", "Speed+", show=False),
         Binding("[", "speed_down", "Speed-", show=False),
+        Binding("t", "toggle_sleep_timer", "Sleep Timer"),
     ]
 
     # Progress save interval in seconds
@@ -262,11 +263,43 @@ class PrimaryScreen(Screen[None]):
 
     async def action_refresh(self) -> None:
         """Refresh all feeds from their sources."""
+        from feedback.widgets.loading_overlay import LoadingOverlay
+
         app: FeedbackApp = self.app  # type: ignore[assignment]
-        self.notify("Refreshing feeds...")
-        await app.refresh_feeds()
-        await self._load_feeds()
-        self.notify("Feeds refreshed", severity="information")
+
+        if not app.feeds:
+            self.notify("No feeds to refresh", severity="information")
+            return
+
+        # Create and show loading overlay
+        loading = LoadingOverlay(
+            title="Refreshing Feeds",
+            message=f"Updating {len(app.feeds)} feeds...",
+            cancellable=False,
+        )
+        self.app.push_screen(loading)
+
+        def progress_callback(current: int, total: int, title: str) -> None:
+            loading.update_progress(current, total, title)
+
+        try:
+            success, failed, errors = await app.refresh_feeds_from_sources(
+                progress_callback=progress_callback
+            )
+            await self._load_feeds()
+
+            if failed == 0:
+                self.notify(f"Refreshed {success} feeds", severity="information")
+            else:
+                self.notify(
+                    f"Refreshed {success} feeds, {failed} failed",
+                    severity="warning",
+                )
+                # Log errors (first 3)
+                for error in errors[:3]:
+                    self.notify(error, severity="error")
+        finally:
+            self.app.pop_screen()
 
     def action_add_feed(self) -> None:
         """Add a new feed.
@@ -283,6 +316,8 @@ class PrimaryScreen(Screen[None]):
 
     async def on_input_submitted(self, event: Input.Submitted) -> None:
         """Handle input submission (add feed or search)."""
+        from feedback.widgets.loading_overlay import LoadingOverlay
+
         value = event.value.strip()
         is_search = isinstance(event.input, SearchInput)
         event.input.remove()
@@ -300,20 +335,44 @@ class PrimaryScreen(Screen[None]):
             if not url.startswith(("http://", "https://")):
                 url = f"https://{url}"
 
-            app: FeedbackApp = self.app  # type: ignore[assignment]
-            self.notify(f"Adding feed: {url}...")
+            # Show loading overlay
+            loading = LoadingOverlay(
+                title="Adding Feed",
+                message=f"Fetching {url}...",
+                cancellable=False,
+            )
+            self.app.push_screen(loading)
 
-            if await app.add_feed(url):
-                await self._load_feeds()
-                self.notify("Feed added successfully", severity="information")
+            try:
+                app: FeedbackApp = self.app  # type: ignore[assignment]
+                if await app.add_feed(url):
+                    await self._load_feeds()
+                    self.notify("Feed added successfully", severity="information")
+            finally:
+                self.app.pop_screen()
 
     async def action_delete(self) -> None:
         """Delete the selected feed."""
+        from feedback.widgets.confirm_dialog import ConfirmDialog
+
         feed_list = self.query_one(FeedList)
         selected_feed = feed_list.get_selected_feed()
 
         if selected_feed is None:
             self.notify("No feed selected", severity="warning")
+            return
+
+        # Show confirmation dialog
+        confirmed = await self.app.push_screen_wait(
+            ConfirmDialog(
+                title="Delete Feed",
+                message=f"Delete '{selected_feed.title}' and all its episodes?",
+                confirm_label="Delete",
+                cancel_label="Cancel",
+            )
+        )
+
+        if not confirmed:
             return
 
         app: FeedbackApp = self.app  # type: ignore[assignment]
@@ -554,6 +613,7 @@ class PrimaryScreen(Screen[None]):
             DiscoverySearchError,
             PodcastIndexClient,
         )
+        from feedback.widgets.loading_overlay import LoadingOverlay
 
         config = get_config()
 
@@ -571,8 +631,15 @@ class PrimaryScreen(Screen[None]):
             timeout=config.network.timeout,
         )
 
+        # Show loading overlay
+        loading = LoadingOverlay(
+            title="Searching Podcasts",
+            message=f"Searching for '{query}'...",
+            cancellable=False,
+        )
+        self.app.push_screen(loading)
+
         try:
-            self.notify(f"Searching for '{query}'...")
             results = await client.search(query, max_results=10)
 
             if not results:
@@ -596,3 +663,17 @@ class PrimaryScreen(Screen[None]):
             self.notify(f"Auth error: {e}", severity="error")
         except DiscoverySearchError as e:
             self.notify(f"Search error: {e}", severity="error")
+        finally:
+            self.app.pop_screen()
+
+    def action_toggle_sleep_timer(self) -> None:
+        """Cycle through sleep timer modes."""
+        app: FeedbackApp = self.app  # type: ignore[assignment]
+        new_mode = app.sleep_timer.cycle_mode()
+
+        if new_mode.name == "OFF":
+            self.notify("Sleep timer: Off")
+        elif new_mode.name == "END_OF_EPISODE":
+            self.notify("Sleep timer: End of episode")
+        else:
+            self.notify(f"Sleep timer: {new_mode.label}")

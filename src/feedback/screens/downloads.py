@@ -152,6 +152,8 @@ class DownloadsScreen(Screen[None]):
 
     async def action_delete(self) -> None:
         """Delete the selected download and its file."""
+        from feedback.widgets.confirm_dialog import ConfirmDialog
+
         download_list = self.query_one(DownloadList)
         item = download_list.get_selected_download()
 
@@ -161,6 +163,19 @@ class DownloadsScreen(Screen[None]):
 
         if item.status == DownloadStatus.DOWNLOADING:
             self.notify("Cancel the download first", severity="warning")
+            return
+
+        # Show confirmation dialog
+        confirmed = await self.app.push_screen_wait(
+            ConfirmDialog(
+                title="Delete Download",
+                message=f"Delete '{item.destination.name}'?",
+                confirm_label="Delete",
+                cancel_label="Cancel",
+            )
+        )
+
+        if not confirmed:
             return
 
         # Delete the file if it exists
@@ -209,15 +224,41 @@ class DownloadsScreen(Screen[None]):
 
     async def action_cancel_all(self) -> None:
         """Cancel all pending and active downloads."""
+        from feedback.widgets.confirm_dialog import ConfirmDialog
+
         app: FeedbackApp = self.app  # type: ignore[assignment]
+
+        # Count active/pending downloads
+        items = app.download_queue.get_items()
+        active_count = sum(
+            1
+            for item in items
+            if item.status in (DownloadStatus.PENDING, DownloadStatus.DOWNLOADING)
+        )
+
+        if active_count == 0:
+            self.notify("No downloads to cancel", severity="information")
+            return
+
+        # Show confirmation dialog
+        confirmed = await self.app.push_screen_wait(
+            ConfirmDialog(
+                title="Cancel All Downloads",
+                message=f"Cancel {active_count} active download{'s' if active_count != 1 else ''}?",
+                confirm_label="Cancel All",
+                cancel_label="Keep",
+            )
+        )
+
+        if not confirmed:
+            return
+
         count = await app.download_queue.cancel_all()
 
         await self._load_downloads()
 
         if count > 0:
             self.notify(f"Cancelled {count} downloads", severity="information")
-        else:
-            self.notify("No downloads to cancel", severity="information")
 
     async def action_clear_completed(self) -> None:
         """Clear completed, failed, and cancelled downloads from the list."""

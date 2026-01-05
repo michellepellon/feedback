@@ -153,8 +153,23 @@ class QueueScreen(Screen[None]):
 
     async def action_clear(self) -> None:
         """Clear the entire queue."""
+        from feedback.widgets.confirm_dialog import ConfirmDialog
+
         if not self._queue_items:
             self.notify("Queue is already empty", severity="information")
+            return
+
+        # Show confirmation dialog
+        confirmed = await self.app.push_screen_wait(
+            ConfirmDialog(
+                title="Clear Queue",
+                message=f"Remove all {len(self._queue_items)} items from the queue?",
+                confirm_label="Clear",
+                cancel_label="Cancel",
+            )
+        )
+
+        if not confirmed:
             return
 
         app: FeedbackApp = self.app  # type: ignore[assignment]

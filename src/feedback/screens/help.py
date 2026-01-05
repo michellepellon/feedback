@@ -23,7 +23,8 @@ A modern TUI podcast client for the terminal
   [bold]Enter[/bold]           Select / Play
   [bold]Tab[/bold]             Next pane
   [bold]Shift+Tab[/bold]       Previous pane
-  [bold]1 / 2 / 3[/bold]       Switch to Feeds / Queue / Downloads
+  [bold]1 / 2 / 3 / 4[/bold]   Switch to Feeds / Queue / Downloads / History
+  [bold]Ctrl+,[/bold]          Open settings
   [bold]q[/bold]               Quit
 
 [bold underline]Feed Management[/bold underline]
@@ -48,6 +49,7 @@ A modern TUI podcast client for the terminal
   [bold]b[/bold]               Seek backward 10 seconds
   [bold]+ / -[/bold]           Volume up / down
   [bold]] / [[/bold]           Speed up / down
+  [bold]t[/bold]               Cycle sleep timer (Off/15/30/45/60 min/End)
 
 [bold underline]Queue Screen[/bold underline]
   [bold]Enter[/bold]           Play selected item
@@ -61,6 +63,11 @@ A modern TUI podcast client for the terminal
   [bold]C[/bold]               Cancel all downloads
   [bold]d[/bold]               Delete downloaded file
   [bold]x[/bold]               Clear completed downloads
+
+[bold underline]History Screen[/bold underline]
+  [bold]Enter[/bold]           Play episode from history
+  [bold]c[/bold]               Clear all history
+  [bold]Escape[/bold]          Go back
 
 [bold underline]CLI Commands[/bold underline]
   [dim]feedback[/dim]                    Launch the TUI

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import aiosqlite
 
-from feedback.models import Episode, Feed, QueueItem
+from feedback.models import Episode, Feed, HistoryItem, QueueItem
 
 # SQL schema
 SCHEMA = """
@@ -42,8 +42,17 @@ CREATE TABLE IF NOT EXISTS queue (
     FOREIGN KEY (episode_id) REFERENCES episode(id) ON DELETE CASCADE
 );
 
+CREATE TABLE IF NOT EXISTS playback_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    episode_id INTEGER NOT NULL,
+    played_at TEXT NOT NULL,
+    duration_listened_ms INTEGER DEFAULT 0,
+    FOREIGN KEY (episode_id) REFERENCES episode(id) ON DELETE CASCADE
+);
+
 CREATE INDEX IF NOT EXISTS idx_episode_feed_key ON episode(feed_key);
 CREATE INDEX IF NOT EXISTS idx_episode_played ON episode(played);
+CREATE INDEX IF NOT EXISTS idx_history_played_at ON playback_history(played_at);
 """
 
 
@@ -356,6 +365,121 @@ class Database:
         """Clear the playback queue."""
         async with self.transaction() as conn:
             await conn.execute("DELETE FROM queue")
+
+    # Playback history operations
+
+    async def add_to_history(
+        self, episode_id: int, duration_listened_ms: int = 0
+    ) -> HistoryItem:
+        """Add an episode to playback history.
+
+        Args:
+            episode_id: Episode database ID.
+            duration_listened_ms: How long the user listened.
+
+        Returns:
+            The created history item.
+        """
+        from datetime import datetime
+
+        if self._conn is None:
+            raise RuntimeError("Database not connected")
+
+        played_at = datetime.now()
+        async with self.transaction() as conn:
+            cursor = await conn.execute(
+                """
+                INSERT INTO playback_history (episode_id, played_at, duration_listened_ms)
+                VALUES (?, ?, ?)
+                """,
+                (episode_id, played_at.isoformat(), duration_listened_ms),
+            )
+            history_id = cursor.lastrowid
+
+        return HistoryItem(
+            id=history_id,
+            episode_id=episode_id,
+            played_at=played_at,
+            duration_listened_ms=duration_listened_ms,
+        )
+
+    async def get_history(self, limit: int = 50) -> list[tuple[HistoryItem, Episode]]:
+        """Get playback history with episode details.
+
+        Args:
+            limit: Maximum number of history items to return.
+
+        Returns:
+            List of (HistoryItem, Episode) tuples, newest first.
+        """
+        if self._conn is None:
+            raise RuntimeError("Database not connected")
+
+        async with self._conn.execute(
+            """
+            SELECT h.id, h.episode_id, h.played_at, h.duration_listened_ms,
+                   e.id as e_id, e.feed_key, e.title, e.description, e.link,
+                   e.enclosure, e.pubdate, e.copyright, e.played, e.progress_ms,
+                   e.downloaded_path
+            FROM playback_history h
+            JOIN episode e ON h.episode_id = e.id
+            ORDER BY h.played_at DESC
+            LIMIT ?
+            """,
+            (limit,),
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        return [self._rows_to_history_item(row) for row in rows]
+
+    async def clear_history(self) -> int:
+        """Clear all playback history.
+
+        Returns:
+            Number of items cleared.
+        """
+        if self._conn is None:
+            raise RuntimeError("Database not connected")
+
+        async with self.transaction() as conn:
+            cursor = await conn.execute("DELETE FROM playback_history")
+            return cursor.rowcount
+
+    @staticmethod
+    def _rows_to_history_item(row: aiosqlite.Row) -> tuple[HistoryItem, Episode]:
+        """Convert a joined row to HistoryItem and Episode."""
+        import contextlib
+        from datetime import datetime
+
+        played_at = datetime.fromisoformat(row["played_at"])
+
+        history = HistoryItem(
+            id=row["id"],
+            episode_id=row["episode_id"],
+            played_at=played_at,
+            duration_listened_ms=row["duration_listened_ms"] or 0,
+        )
+
+        pubdate = None
+        if row["pubdate"]:
+            with contextlib.suppress(ValueError):
+                pubdate = datetime.fromisoformat(row["pubdate"])
+
+        episode = Episode(
+            id=row["e_id"],
+            feed_key=row["feed_key"],
+            title=row["title"],
+            description=row["description"],
+            link=row["link"],
+            enclosure=row["enclosure"],
+            pubdate=pubdate,
+            copyright=row["copyright"],
+            played=bool(row["played"]),
+            progress_ms=row["progress_ms"] or 0,
+            downloaded_path=row["downloaded_path"],
+        )
+
+        return history, episode
 
     # Helper methods
 

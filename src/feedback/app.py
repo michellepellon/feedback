@@ -10,12 +10,16 @@ from textual.binding import Binding
 from feedback.config import get_config, get_data_path
 from feedback.database import Database
 from feedback.downloads import DownloadItem, DownloadQueue
+from feedback.logging import get_logger, setup_logging
 from feedback.models import Episode, Feed  # noqa: TC001 - used at runtime
 from feedback.player.base import NullPlayer, PlayerState
 from feedback.screens.downloads import DownloadsScreen
 from feedback.screens.help import HelpScreen
+from feedback.screens.history import HistoryScreen
 from feedback.screens.primary import PrimaryScreen
 from feedback.screens.queue import QueueScreen
+from feedback.screens.settings import SettingsScreen
+from feedback.sleep_timer import SleepTimer
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -23,6 +27,9 @@ if TYPE_CHECKING:
     from textual.screen import Screen
 
     from feedback.player.base import BasePlayer
+
+# Module logger
+_log = get_logger("app")
 
 
 class FeedbackApp(App[None]):
@@ -34,15 +41,18 @@ class FeedbackApp(App[None]):
     BINDINGS: ClassVar[list[Binding | tuple[str, str] | tuple[str, str, str]]] = [
         Binding("q", "quit", "Quit", priority=True),
         Binding("?", "toggle_help", "Help"),
+        Binding("ctrl+comma", "open_settings", "Settings", show=False),
         Binding("1", "switch_screen('primary')", "Feeds", show=False),
         Binding("2", "switch_screen('queue')", "Queue", show=False),
         Binding("3", "switch_screen('downloads')", "Downloads", show=False),
+        Binding("4", "switch_screen('history')", "History", show=False),
     ]
 
     SCREENS: ClassVar[dict[str, Callable[[], Screen[Any]]]] = {
         "primary": PrimaryScreen,
         "queue": QueueScreen,
         "downloads": DownloadsScreen,
+        "history": HistoryScreen,
     }
 
     def __init__(self) -> None:
@@ -54,6 +64,7 @@ class FeedbackApp(App[None]):
         self._current_episode: Episode | None = None
         self._feeds: list[Feed] = []
         self._download_queue: DownloadQueue | None = None
+        self._sleep_timer = SleepTimer(on_expire=self._on_sleep_timer_expire)
 
     def _create_player(self) -> BasePlayer:
         """Create the appropriate player based on config.
@@ -111,12 +122,34 @@ class FeedbackApp(App[None]):
             raise RuntimeError("Download queue not initialized")
         return self._download_queue
 
+    @property
+    def sleep_timer(self) -> SleepTimer:
+        """Get the sleep timer instance."""
+        return self._sleep_timer
+
+    def _on_sleep_timer_expire(self) -> None:
+        """Handle sleep timer expiration."""
+        _log.info("Sleep timer expired, stopping playback")
+        # Schedule the stop on the event loop
+        self.call_later(self._stop_for_sleep)
+
+    async def _stop_for_sleep(self) -> None:
+        """Stop playback when sleep timer expires."""
+        if self._player.state != PlayerState.STOPPED:
+            await self._player.pause()
+            self.notify("Sleep timer: Playback paused", severity="information")
+
     async def on_mount(self) -> None:
         """Set up the application on mount."""
+        # Initialize logging
+        setup_logging(log_to_file=True)
+        _log.info("Feedback starting up")
+
         # Initialize database
         db_path = get_data_path() / "feedback.db"
         self._db = Database(db_path)
         await self._db.connect()
+        _log.info("Database connected: %s", db_path)
 
         # Initialize download queue
         download_dir = get_data_path() / "downloads"
@@ -124,24 +157,79 @@ class FeedbackApp(App[None]):
             download_dir=download_dir,
             max_concurrent=self._config.download.concurrent,
         )
+        _log.info("Download queue initialized: %s", download_dir)
 
         # Load feeds
         await self.refresh_feeds()
+        _log.info("Loaded %d feeds", len(self._feeds))
 
         # Push initial screen
         self.push_screen("primary")
 
     async def on_unmount(self) -> None:
         """Clean up resources on unmount."""
+        _log.info("Feedback shutting down")
         if self._player.state != PlayerState.STOPPED:
             await self._player.stop()
         if self._db is not None:
             await self._db.close()
+        _log.info("Shutdown complete")
 
     async def refresh_feeds(self) -> None:
         """Refresh the list of feeds from the database."""
         if self._db is not None:
             self._feeds = await self._db.get_feeds()
+
+    async def refresh_feeds_from_sources(
+        self,
+        *,
+        progress_callback: Callable[[int, int, str], None] | None = None,
+    ) -> tuple[int, int, list[str]]:
+        """Refresh all feeds by fetching from their sources.
+
+        Args:
+            progress_callback: Optional callback(current, total, title) for progress.
+
+        Returns:
+            Tuple of (success_count, fail_count, list of errors).
+        """
+        from feedback.feeds import FeedError, FeedFetcher
+
+        if self._db is None:
+            return 0, 0, ["Database not initialized"]
+
+        feeds = await self._db.get_feeds()
+        total = len(feeds)
+        success = 0
+        errors: list[str] = []
+
+        fetcher = FeedFetcher(
+            timeout=self._config.network.timeout,
+            max_episodes=self._config.network.max_episodes,
+        )
+
+        for i, feed in enumerate(feeds, 1):
+            if progress_callback:
+                progress_callback(i, total, feed.title)
+
+            try:
+                _log.debug("Refreshing feed: %s", feed.key)
+                updated_feed, episodes = await fetcher.fetch(feed.key)
+                await self._db.upsert_feed(updated_feed)
+                await self._db.upsert_episodes(episodes)
+                success += 1
+                _log.info("Refreshed feed: %s (%d episodes)", feed.title, len(episodes))
+            except FeedError as e:
+                _log.warning("Failed to refresh feed %s: %s", feed.title, e)
+                errors.append(f"{feed.title}: {e}")
+            except Exception as e:
+                _log.exception("Unexpected error refreshing feed %s", feed.title)
+                errors.append(f"{feed.title}: {e}")
+
+        # Reload feeds list
+        self._feeds = await self._db.get_feeds()
+
+        return success, total - success, errors
 
     async def add_feed(self, url: str, *, check_duplicate: bool = True) -> bool:
         """Add a new feed.
@@ -166,6 +254,7 @@ class FeedbackApp(App[None]):
                 return False
 
         try:
+            _log.info("Adding new feed: %s", url)
             fetcher = FeedFetcher(
                 timeout=self._config.network.timeout,
                 max_episodes=self._config.network.max_episodes,
@@ -176,6 +265,7 @@ class FeedbackApp(App[None]):
             if check_duplicate:
                 existing = await self.database.get_feed(feed.key)
                 if existing:
+                    _log.info("Feed already exists: %s", existing.title)
                     self.notify(
                         f"Feed already exists: {existing.title}",
                         severity="warning",
@@ -185,11 +275,14 @@ class FeedbackApp(App[None]):
             await self.database.upsert_feed(feed)
             await self.database.upsert_episodes(episodes)
             await self.refresh_feeds()
+            _log.info("Added feed: %s (%d episodes)", feed.title, len(episodes))
             return True
         except FeedError as e:
+            _log.warning("Failed to add feed %s: %s", url, e)
             self.notify(f"Error adding feed: {e}", severity="error")
             return False
         except Exception as e:
+            _log.exception("Unexpected error adding feed %s", url)
             self.notify(f"Unexpected error: {e}", severity="error")
             return False
 
@@ -226,6 +319,11 @@ class FeedbackApp(App[None]):
         # Start playback
         await self._player.play(media_path, start_ms=start_ms)
         self._current_episode = episode
+
+        # Record to playback history
+        if episode.id is not None:
+            await self.database.add_to_history(episode.id)
+            _log.debug("Added episode to playback history: %s", episode.title)
 
     async def toggle_play_pause(self) -> None:
         """Toggle play/pause for current playback."""
@@ -286,6 +384,10 @@ class FeedbackApp(App[None]):
     def action_toggle_help(self) -> None:
         """Toggle the help overlay."""
         self.push_screen(HelpScreen())
+
+    def action_open_settings(self) -> None:
+        """Open the settings screen."""
+        self.push_screen(SettingsScreen())
 
     async def action_switch_screen(self, screen_name: str) -> None:
         """Switch to a named screen.
