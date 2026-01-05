@@ -1,11 +1,52 @@
-name: Update Homebrew Formula
+name: Build and Release
 
 on:
   release:
     types: [published]
 
 jobs:
+  build:
+    strategy:
+      matrix:
+        include:
+          - os: macos-14        # ARM64
+            arch: arm64
+          - os: macos-13        # Intel
+            arch: x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[dev]"
+
+      - name: Build binary with PyInstaller
+        run: |
+          pyinstaller --onefile --name feedback --clean src/feedback/__main__.py
+
+      - name: Create tarball
+        run: |
+          cd dist
+          tar -czvf feedback-${{ matrix.arch }}-apple-darwin.tar.gz feedback
+          shasum -a 256 feedback-${{ matrix.arch }}-apple-darwin.tar.gz > feedback-${{ matrix.arch }}-apple-darwin.tar.gz.sha256
+
+      - name: Upload to release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release upload ${{ github.ref_name }} \
+            dist/feedback-${{ matrix.arch }}-apple-darwin.tar.gz \
+            dist/feedback-${{ matrix.arch }}-apple-darwin.tar.gz.sha256
+
   update-homebrew:
+    needs: build
     runs-on: ubuntu-latest
     steps:
       - name: Get release info
@@ -15,12 +56,13 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "version_num=${VERSION#v}" >> $GITHUB_OUTPUT
 
-      - name: Download release tarball and calculate SHA256
-        id: sha
+      - name: Download SHA256 files
         run: |
-          curl -sL "https://github.com/${{ github.repository }}/archive/refs/tags/${{ steps.release.outputs.version }}.tar.gz" -o release.tar.gz
-          SHA256=$(sha256sum release.tar.gz | cut -d ' ' -f 1)
-          echo "sha256=${SHA256}" >> $GITHUB_OUTPUT
+          curl -sL "https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.version }}/feedback-arm64-apple-darwin.tar.gz.sha256" -o arm64.sha256
+          curl -sL "https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.version }}/feedback-x86_64-apple-darwin.tar.gz.sha256" -o x86_64.sha256
+          echo "sha256_arm64=$(cat arm64.sha256 | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+          echo "sha256_x86_64=$(cat x86_64.sha256 | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+        id: sha
 
       - name: Checkout homebrew-tap
         uses: actions/checkout@v4
@@ -30,10 +72,54 @@ jobs:
           path: homebrew-tap
 
       - name: Update formula
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          VERSION_NUM: ${{ steps.release.outputs.version_num }}
+          SHA256_ARM64: ${{ steps.sha.outputs.sha256_arm64 }}
+          SHA256_X86_64: ${{ steps.sha.outputs.sha256_x86_64 }}
         run: |
-          cd homebrew-tap
-          sed -i 's|url "https://github.com/michellepellon/feedback/archive/refs/tags/.*\.tar\.gz"|url "https://github.com/michellepellon/feedback/archive/refs/tags/${{ steps.release.outputs.version }}.tar.gz"|' Formula/feedback.rb
-          sed -i 's|sha256 ".*"|sha256 "${{ steps.sha.outputs.sha256 }}"|' Formula/feedback.rb
+          cat > homebrew-tap/Formula/feedback.rb << EOF
+          # typed: false
+          # frozen_string_literal: true
+
+          class Feedback < Formula
+            desc "A modern TUI podcast client for the terminal"
+            homepage "https://github.com/michellepellon/feedback"
+            version "${VERSION_NUM}"
+            license "MIT"
+
+            on_macos do
+              on_arm do
+                url "https://github.com/michellepellon/feedback/releases/download/${VERSION}/feedback-arm64-apple-darwin.tar.gz"
+                sha256 "${SHA256_ARM64}"
+              end
+              on_intel do
+                url "https://github.com/michellepellon/feedback/releases/download/${VERSION}/feedback-x86_64-apple-darwin.tar.gz"
+                sha256 "${SHA256_X86_64}"
+              end
+            end
+
+            def install
+              bin.install "feedback"
+            end
+
+            def caveats
+              <<~EOS
+                feedback requires either VLC or mpv for audio playback.
+                Install one of them:
+                  brew install vlc
+                  # or
+                  brew install mpv
+              EOS
+            end
+
+            test do
+              assert_match "feedback", shell_output("\#{bin}/feedback --help", 2)
+            end
+          end
+          EOF
+          # Remove leading whitespace from heredoc
+          sed -i 's/^          //' homebrew-tap/Formula/feedback.rb
 
       - name: Commit and push
         run: |

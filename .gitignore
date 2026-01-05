@@ -72,3 +72,4 @@ Pipfile.lock
 
 # Working files (not for release)
 plan.md
+homebrew-tap/
