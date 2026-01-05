@@ -106,13 +106,14 @@ class TestEpisodeList:
     def test_episode_list_initialization(self) -> None:
         """Test EpisodeList initializes correctly."""
         episode_list = EpisodeList()
-        assert episode_list._episodes == []
+        assert episode_list._all_episodes == []
+        assert episode_list._filtered_episodes == []
 
     def test_episode_list_set_episodes(self, sample_episodes: list[Episode]) -> None:
         """Test setting episodes on EpisodeList."""
         episode_list = EpisodeList()
         episode_list.set_episodes(sample_episodes)
-        assert episode_list._episodes == sample_episodes
+        assert episode_list._all_episodes == sample_episodes
 
     def test_episode_list_get_selected_empty(self) -> None:
         """Test get_selected_episode returns None when empty."""
@@ -124,7 +125,7 @@ class TestEpisodeList:
     ) -> None:
         """Test get_selected_episode returns None when index out of bounds."""
         episode_list = EpisodeList()
-        episode_list._episodes = sample_episodes
+        episode_list._filtered_episodes = sample_episodes
         with patch.object(
             type(episode_list),
             "highlighted",
@@ -138,7 +139,7 @@ class TestEpisodeList:
     ) -> None:
         """Test get_selected_episode returns episode when valid selection."""
         episode_list = EpisodeList()
-        episode_list._episodes = sample_episodes
+        episode_list._filtered_episodes = sample_episodes
         with patch.object(
             type(episode_list), "highlighted", new_callable=PropertyMock, return_value=0
         ):

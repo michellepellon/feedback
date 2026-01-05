@@ -13,6 +13,7 @@ from feedback.downloads import DownloadItem, DownloadQueue
 from feedback.models import Episode, Feed  # noqa: TC001 - used at runtime
 from feedback.player.base import NullPlayer, PlayerState
 from feedback.screens.downloads import DownloadsScreen
+from feedback.screens.help import HelpScreen
 from feedback.screens.primary import PrimaryScreen
 from feedback.screens.queue import QueueScreen
 
@@ -142,16 +143,27 @@ class FeedbackApp(App[None]):
         if self._db is not None:
             self._feeds = await self._db.get_feeds()
 
-    async def add_feed(self, url: str) -> bool:
+    async def add_feed(self, url: str, *, check_duplicate: bool = True) -> bool:
         """Add a new feed.
 
         Args:
             url: The feed URL.
+            check_duplicate: If True, warn if feed already exists.
 
         Returns:
             True if successful, False otherwise.
         """
         from feedback.feeds import FeedError, FeedFetcher
+
+        # Check for duplicate
+        if check_duplicate:
+            existing = await self.database.get_feed(url)
+            if existing:
+                self.notify(
+                    f"Feed already exists: {existing.title}",
+                    severity="warning",
+                )
+                return False
 
         try:
             fetcher = FeedFetcher(
@@ -159,6 +171,17 @@ class FeedbackApp(App[None]):
                 max_episodes=self._config.network.max_episodes,
             )
             feed, episodes = await fetcher.fetch(url)
+
+            # Double-check for duplicate by feed key (URL might redirect)
+            if check_duplicate:
+                existing = await self.database.get_feed(feed.key)
+                if existing:
+                    self.notify(
+                        f"Feed already exists: {existing.title}",
+                        severity="warning",
+                    )
+                    return False
+
             await self.database.upsert_feed(feed)
             await self.database.upsert_episodes(episodes)
             await self.refresh_feeds()
@@ -262,7 +285,7 @@ class FeedbackApp(App[None]):
 
     def action_toggle_help(self) -> None:
         """Toggle the help overlay."""
-        self.notify("Help: Press 1-3 to switch screens, q to quit")
+        self.push_screen(HelpScreen())
 
     async def action_switch_screen(self, screen_name: str) -> None:
         """Switch to a named screen.

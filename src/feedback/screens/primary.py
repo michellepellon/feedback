@@ -97,6 +97,10 @@ class PrimaryScreen(Screen[None]):
         Binding("u", "mark_unplayed", "Mark Unplayed"),
         Binding("Q", "add_to_queue", "Add to Queue"),
         Binding("D", "download_episode", "Download"),
+        Binding("F", "cycle_filter", "Filter"),
+        Binding("O", "cycle_sort", "Sort"),
+        Binding("M", "mark_all_played", "Mark All Played"),
+        Binding("i", "feed_info", "Feed Info"),
         Binding("f", "seek_forward", "Seek +30s", show=False),
         Binding("b", "seek_backward", "Seek -10s", show=False),
         Binding("+", "volume_up", "Vol+", show=False),
@@ -453,6 +457,77 @@ class PrimaryScreen(Screen[None]):
         new_speed = max(app.player.speed - 0.1, 0.5)
         await app.player.set_speed(new_speed)
         self.notify(f"Speed: {new_speed:.1f}x")
+
+    def action_cycle_filter(self) -> None:
+        """Cycle through episode filter options."""
+        episode_list = self.query_one(EpisodeList)
+        episode_list.cycle_filter()
+
+        filter_label = episode_list.get_filter_label()
+        count = episode_list.filtered_count
+        total = episode_list.total_count
+        self.notify(f"Filter: {filter_label} ({count}/{total} episodes)")
+
+    def action_cycle_sort(self) -> None:
+        """Cycle through episode sort options."""
+        episode_list = self.query_one(EpisodeList)
+        episode_list.cycle_sort()
+
+        sort_label = episode_list.get_sort_label()
+        self.notify(f"Sort: {sort_label}")
+
+    async def action_mark_all_played(self) -> None:
+        """Mark all episodes of the selected feed as played."""
+        feed_list = self.query_one(FeedList)
+        feed = feed_list.get_selected_feed()
+
+        if feed is None:
+            self.notify("No feed selected", severity="warning")
+            return
+
+        app: FeedbackApp = self.app  # type: ignore[assignment]
+        count = await app.database.mark_all_played(feed.key, played=True)
+
+        # Refresh episode list
+        await self._load_episodes(feed.key)
+
+        self.notify(f"Marked {count} episodes as played", severity="information")
+
+    async def action_feed_info(self) -> None:
+        """Show information about the selected feed."""
+        feed_list = self.query_one(FeedList)
+        feed = feed_list.get_selected_feed()
+
+        if feed is None:
+            self.notify("No feed selected", severity="warning")
+            return
+
+        app: FeedbackApp = self.app  # type: ignore[assignment]
+        total, unplayed = await app.database.get_episode_count(feed.key)
+
+        # Format last build date
+        last_updated = "Unknown"
+        if feed.last_build_date:
+            last_updated = feed.last_build_date.strftime("%Y-%m-%d %H:%M")
+
+        # Show info in metadata panel
+        metadata_panel = self.query_one(MetadataPanel)
+        info_text = f"""[bold]{feed.title}[/bold]
+
+[dim]URL:[/dim] {feed.key}
+
+[dim]Website:[/dim] {feed.link or 'N/A'}
+
+[dim]Episodes:[/dim] {total} total, {unplayed} unplayed
+
+[dim]Last Updated:[/dim] {last_updated}
+
+[dim]Start Position:[/dim] {feed.start_position_ms // 1000}s
+
+[dim]Description:[/dim]
+{feed.description or 'No description'}"""
+
+        metadata_panel.update(info_text)
 
     def action_search_podcasts(self) -> None:
         """Search for podcasts using Podcast Index API.

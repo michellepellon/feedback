@@ -278,6 +278,48 @@ class Database:
                 (1 if played else 0, episode_id),
             )
 
+    async def mark_all_played(self, feed_key: str, played: bool = True) -> int:
+        """Mark all episodes of a feed as played/unplayed.
+
+        Args:
+            feed_key: The feed key.
+            played: True to mark as played, False for unplayed.
+
+        Returns:
+            Number of episodes updated.
+        """
+        async with self.transaction() as conn:
+            cursor = await conn.execute(
+                "UPDATE episode SET played = ?, progress_ms = 0 WHERE feed_key = ?",
+                (1 if played else 0, feed_key),
+            )
+            return cursor.rowcount
+
+    async def get_episode_count(self, feed_key: str) -> tuple[int, int]:
+        """Get episode counts for a feed.
+
+        Args:
+            feed_key: The feed key.
+
+        Returns:
+            Tuple of (total_count, unplayed_count).
+        """
+        if self._conn is None:
+            raise RuntimeError("Database not connected")
+
+        async with self._conn.execute(
+            "SELECT COUNT(*) FROM episode WHERE feed_key = ?", (feed_key,)
+        ) as cursor:
+            total = (await cursor.fetchone())[0]
+
+        async with self._conn.execute(
+            "SELECT COUNT(*) FROM episode WHERE feed_key = ? AND played = 0",
+            (feed_key,),
+        ) as cursor:
+            unplayed = (await cursor.fetchone())[0]
+
+        return total, unplayed
+
     async def delete_episode(self, episode_id: int) -> None:
         """Delete an episode."""
         async with self.transaction() as conn:

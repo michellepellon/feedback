@@ -249,6 +249,61 @@ class TestEpisodeOperations:
         result = await database.get_episode(episode_id)
         assert result is None
 
+    @pytest.mark.asyncio
+    async def test_mark_all_played(self, database: Database):
+        """Test marking all episodes of a feed as played."""
+        await database.upsert_feed(Feed(key="feed1", title="Test"))
+        await database.upsert_episode(
+            Episode(feed_key="feed1", title="Ep1", enclosure="url1")
+        )
+        await database.upsert_episode(
+            Episode(feed_key="feed1", title="Ep2", enclosure="url2")
+        )
+        await database.upsert_episode(
+            Episode(feed_key="feed1", title="Ep3", enclosure="url3")
+        )
+
+        count = await database.mark_all_played("feed1", played=True)
+        assert count == 3
+
+        episodes = await database.get_episodes("feed1")
+        assert all(ep.played for ep in episodes)
+
+    @pytest.mark.asyncio
+    async def test_mark_all_unplayed(self, database: Database):
+        """Test marking all episodes of a feed as unplayed."""
+        await database.upsert_feed(Feed(key="feed1", title="Test"))
+        await database.upsert_episode(
+            Episode(feed_key="feed1", title="Ep1", enclosure="url1", played=True)
+        )
+        await database.upsert_episode(
+            Episode(feed_key="feed1", title="Ep2", enclosure="url2", played=True)
+        )
+
+        count = await database.mark_all_played("feed1", played=False)
+        assert count == 2
+
+        episodes = await database.get_episodes("feed1")
+        assert all(not ep.played for ep in episodes)
+
+    @pytest.mark.asyncio
+    async def test_get_episode_count(self, database: Database):
+        """Test getting episode counts for a feed."""
+        await database.upsert_feed(Feed(key="feed1", title="Test"))
+        await database.upsert_episode(
+            Episode(feed_key="feed1", title="Ep1", enclosure="url1", played=False)
+        )
+        await database.upsert_episode(
+            Episode(feed_key="feed1", title="Ep2", enclosure="url2", played=True)
+        )
+        await database.upsert_episode(
+            Episode(feed_key="feed1", title="Ep3", enclosure="url3", played=False)
+        )
+
+        total, unplayed = await database.get_episode_count("feed1")
+        assert total == 3
+        assert unplayed == 2
+
 
 class TestQueueOperations:
     """Tests for queue database operations."""

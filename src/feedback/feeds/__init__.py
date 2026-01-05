@@ -13,6 +13,17 @@ from feedback.feeds.fetcher import (
     FeedFetchError,
     FeedParseError,
 )
+from feedback.feeds.opml import (
+    OPMLError,
+    OPMLExportError,
+    OPMLOutline,
+    OPMLParseError,
+    export_opml,
+    export_opml_file,
+    import_opml_feeds,
+    parse_opml,
+    parse_opml_file,
+)
 
 __all__ = [
     "DiscoveryAuthError",
@@ -22,6 +33,15 @@ __all__ = [
     "FeedFetchError",
     "FeedFetcher",
     "FeedParseError",
+    "OPMLError",
+    "OPMLExportError",
+    "OPMLOutline",
+    "OPMLParseError",
     "PodcastIndexClient",
     "PodcastResult",
+    "export_opml",
+    "export_opml_file",
+    "import_opml_feeds",
+    "parse_opml",
+    "parse_opml_file",
 ]
