@@ -93,7 +93,22 @@ class PrimaryScreen(Screen[None]):
         Binding("p", "play_pause", "Play/Pause"),
         Binding("space", "play_pause", "Play/Pause", show=False),
         Binding("S", "search_podcasts", "Search"),
+        Binding("m", "mark_played", "Mark Played"),
+        Binding("u", "mark_unplayed", "Mark Unplayed"),
+        Binding("Q", "add_to_queue", "Add to Queue"),
+        Binding("D", "download_episode", "Download"),
+        Binding("f", "seek_forward", "Seek +30s", show=False),
+        Binding("b", "seek_backward", "Seek -10s", show=False),
+        Binding("+", "volume_up", "Vol+", show=False),
+        Binding("-", "volume_down", "Vol-", show=False),
+        Binding("]", "speed_up", "Speed+", show=False),
+        Binding("[", "speed_down", "Speed-", show=False),
     ]
+
+    # Progress save interval in seconds
+    PROGRESS_SAVE_INTERVAL = 30.0
+    # Mark as played when this percentage is reached
+    PLAYED_THRESHOLD = 0.90
 
     def __init__(self) -> None:
         """Initialize the primary screen."""
@@ -102,6 +117,8 @@ class PrimaryScreen(Screen[None]):
         self._searching = False
         self._selected_feed_key: str | None = None
         self._player_timer = None
+        self._progress_timer = None
+        self._last_saved_position = 0
 
     def compose(self) -> ComposeResult:
         """Compose the primary screen layout."""
@@ -118,10 +135,14 @@ class PrimaryScreen(Screen[None]):
     async def on_mount(self) -> None:
         """Load feeds when screen mounts."""
         await self._load_feeds()
-        # Start the player update timer
+        # Start the player update timer (fast for UI)
         self._player_timer = self.set_interval(0.5, self._update_player_bar)
+        # Start the progress save timer (slower for database)
+        self._progress_timer = self.set_interval(
+            self.PROGRESS_SAVE_INTERVAL, self._save_progress
+        )
 
-    def _update_player_bar(self) -> None:
+    async def _update_player_bar(self) -> None:
         """Update the player bar with current playback position."""
         app: FeedbackApp = self.app  # type: ignore[assignment]
         player_bar = self.query_one(PlayerBar)
@@ -130,9 +151,39 @@ class PrimaryScreen(Screen[None]):
             player_bar.position_ms = app.player.position_ms
             player_bar.duration_ms = app.player.duration_ms
             player_bar.status = "Playing"
+
+            # Check if we should mark as played
+            if app.player.duration_ms > 0:
+                progress = app.player.position_ms / app.player.duration_ms
+                if progress >= self.PLAYED_THRESHOLD and app.current_episode:
+                    episode = app.current_episode
+                    if not episode.played and episode.id is not None:
+                        await app.database.mark_played(episode.id)
+                        episode.played = True
+
         elif app.player.state.name == "PAUSED":
             player_bar.position_ms = app.player.position_ms
             player_bar.status = "Paused"
+        elif app.player.state.name == "STOPPED":
+            # Save final progress when stopped
+            await self._save_progress()
+
+    async def _save_progress(self) -> None:
+        """Save current playback progress to database."""
+        app: FeedbackApp = self.app  # type: ignore[assignment]
+
+        if app.current_episode is None or app.current_episode.id is None:
+            return
+
+        if app.player.state.name not in ("PLAYING", "PAUSED"):
+            return
+
+        position_ms = app.player.position_ms
+
+        # Only save if position changed significantly (>5 seconds)
+        if abs(position_ms - self._last_saved_position) > 5000:
+            await app.database.update_progress(app.current_episode.id, position_ms)
+            self._last_saved_position = position_ms
 
     async def _load_feeds(self) -> None:
         """Load feeds from the database."""
@@ -164,9 +215,16 @@ class PrimaryScreen(Screen[None]):
     async def on_episode_selected(self, event: EpisodeSelected) -> None:
         """Handle episode selection - start playback."""
         app: FeedbackApp = self.app  # type: ignore[assignment]
+
+        # Save progress of previous episode before switching
+        await self._save_progress()
+
         metadata_panel = self.query_one(MetadataPanel)
         metadata_panel.show_episode(event.episode.title, event.episode.description)
         await app.play_episode(event.episode)
+
+        # Reset last saved position for new episode
+        self._last_saved_position = event.episode.progress_ms
 
         # Update the player bar
         player_bar = self.query_one(PlayerBar)
@@ -262,6 +320,11 @@ class PrimaryScreen(Screen[None]):
     async def action_play_pause(self) -> None:
         """Toggle play/pause for current playback."""
         app: FeedbackApp = self.app  # type: ignore[assignment]
+
+        # Save progress before pausing
+        if app.player.state.name == "PLAYING":
+            await self._save_progress()
+
         await app.toggle_play_pause()
 
         player_bar = self.query_one(PlayerBar)
@@ -273,6 +336,123 @@ class PrimaryScreen(Screen[None]):
             self.notify("Paused playback")
         else:
             self.notify("No episode playing")
+
+    async def action_mark_played(self) -> None:
+        """Mark the selected episode as played."""
+        episode_list = self.query_one(EpisodeList)
+        episode = episode_list.get_selected_episode()
+
+        if episode is None or episode.id is None:
+            self.notify("No episode selected", severity="warning")
+            return
+
+        app: FeedbackApp = self.app  # type: ignore[assignment]
+        await app.database.mark_played(episode.id, played=True)
+
+        # Refresh episode list
+        if self._selected_feed_key:
+            await self._load_episodes(self._selected_feed_key)
+
+        self.notify(f"Marked as played: {episode.title}", severity="information")
+
+    async def action_mark_unplayed(self) -> None:
+        """Mark the selected episode as unplayed."""
+        episode_list = self.query_one(EpisodeList)
+        episode = episode_list.get_selected_episode()
+
+        if episode is None or episode.id is None:
+            self.notify("No episode selected", severity="warning")
+            return
+
+        app: FeedbackApp = self.app  # type: ignore[assignment]
+        await app.database.mark_played(episode.id, played=False)
+
+        # Refresh episode list
+        if self._selected_feed_key:
+            await self._load_episodes(self._selected_feed_key)
+
+        self.notify(f"Marked as unplayed: {episode.title}", severity="information")
+
+    async def action_add_to_queue(self) -> None:
+        """Add the selected episode to the playback queue."""
+        episode_list = self.query_one(EpisodeList)
+        episode = episode_list.get_selected_episode()
+
+        if episode is None:
+            self.notify("No episode selected", severity="warning")
+            return
+
+        app: FeedbackApp = self.app  # type: ignore[assignment]
+        if await app.add_to_queue(episode):
+            self.notify(f"Added to queue: {episode.title}", severity="information")
+        else:
+            self.notify("Failed to add to queue", severity="error")
+
+    async def action_download_episode(self) -> None:
+        """Download the selected episode."""
+        episode_list = self.query_one(EpisodeList)
+        episode = episode_list.get_selected_episode()
+
+        if episode is None:
+            self.notify("No episode selected", severity="warning")
+            return
+
+        app: FeedbackApp = self.app  # type: ignore[assignment]
+        item = await app.download_episode(episode)
+
+        if item:
+            self.notify(f"Downloading: {episode.title}", severity="information")
+
+    async def action_seek_forward(self) -> None:
+        """Seek forward 30 seconds."""
+        app: FeedbackApp = self.app  # type: ignore[assignment]
+
+        if app.player.state.name not in ("PLAYING", "PAUSED"):
+            return
+
+        new_position = min(
+            app.player.position_ms + 30000,
+            app.player.duration_ms,
+        )
+        await app.player.seek(new_position)
+
+    async def action_seek_backward(self) -> None:
+        """Seek backward 10 seconds."""
+        app: FeedbackApp = self.app  # type: ignore[assignment]
+
+        if app.player.state.name not in ("PLAYING", "PAUSED"):
+            return
+
+        new_position = max(app.player.position_ms - 10000, 0)
+        await app.player.seek(new_position)
+
+    async def action_volume_up(self) -> None:
+        """Increase volume by 10%."""
+        app: FeedbackApp = self.app  # type: ignore[assignment]
+        new_volume = min(app.player.volume + 10, 100)
+        await app.player.set_volume(new_volume)
+        self.notify(f"Volume: {new_volume}%")
+
+    async def action_volume_down(self) -> None:
+        """Decrease volume by 10%."""
+        app: FeedbackApp = self.app  # type: ignore[assignment]
+        new_volume = max(app.player.volume - 10, 0)
+        await app.player.set_volume(new_volume)
+        self.notify(f"Volume: {new_volume}%")
+
+    async def action_speed_up(self) -> None:
+        """Increase playback speed by 0.1x."""
+        app: FeedbackApp = self.app  # type: ignore[assignment]
+        new_speed = min(app.player.speed + 0.1, 2.0)
+        await app.player.set_speed(new_speed)
+        self.notify(f"Speed: {new_speed:.1f}x")
+
+    async def action_speed_down(self) -> None:
+        """Decrease playback speed by 0.1x."""
+        app: FeedbackApp = self.app  # type: ignore[assignment]
+        new_speed = max(app.player.speed - 0.1, 0.5)
+        await app.player.set_speed(new_speed)
+        self.notify(f"Speed: {new_speed:.1f}x")
 
     def action_search_podcasts(self) -> None:
         """Search for podcasts using Podcast Index API.

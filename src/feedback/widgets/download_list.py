@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 class DownloadSelected(Message):
     """Message sent when a download is selected."""
 
+    bubble = True  # Ensure message bubbles up to screen
+
     def __init__(self, download: DownloadItem) -> None:
         """Initialize the message.
 

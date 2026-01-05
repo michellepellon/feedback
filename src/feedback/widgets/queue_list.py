@@ -15,6 +15,8 @@ if TYPE_CHECKING:
 class QueueItemSelected(Message):
     """Message sent when a queue item is selected."""
 
+    bubble = True  # Ensure message bubbles up to screen
+
     def __init__(self, queue_item: QueueItem, episode: Episode) -> None:
         """Initialize the message.
 

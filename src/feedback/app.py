@@ -9,6 +9,7 @@ from textual.binding import Binding
 
 from feedback.config import get_config, get_data_path
 from feedback.database import Database
+from feedback.downloads import DownloadItem, DownloadQueue
 from feedback.models import Episode, Feed  # noqa: TC001 - used at runtime
 from feedback.player.base import NullPlayer, PlayerState
 from feedback.screens.downloads import DownloadsScreen
@@ -51,6 +52,7 @@ class FeedbackApp(App[None]):
         self._player: BasePlayer = self._create_player()
         self._current_episode: Episode | None = None
         self._feeds: list[Feed] = []
+        self._download_queue: DownloadQueue | None = None
 
     def _create_player(self) -> BasePlayer:
         """Create the appropriate player based on config.
@@ -101,12 +103,26 @@ class FeedbackApp(App[None]):
         """Get the list of feeds."""
         return self._feeds
 
+    @property
+    def download_queue(self) -> DownloadQueue:
+        """Get the download queue instance."""
+        if self._download_queue is None:
+            raise RuntimeError("Download queue not initialized")
+        return self._download_queue
+
     async def on_mount(self) -> None:
         """Set up the application on mount."""
         # Initialize database
         db_path = get_data_path() / "feedback.db"
         self._db = Database(db_path)
         await self._db.connect()
+
+        # Initialize download queue
+        download_dir = get_data_path() / "downloads"
+        self._download_queue = DownloadQueue(
+            download_dir=download_dir,
+            max_concurrent=self._config.download.concurrent,
+        )
 
         # Load feeds
         await self.refresh_feeds()
@@ -194,6 +210,55 @@ class FeedbackApp(App[None]):
             await self._player.pause()
         elif self._player.state == PlayerState.PAUSED:
             await self._player.resume()
+
+    async def download_episode(self, episode: Episode) -> DownloadItem | None:
+        """Download an episode.
+
+        Args:
+            episode: The episode to download.
+
+        Returns:
+            DownloadItem if download started, None if already downloaded.
+        """
+        if episode.downloaded_path:
+            self.notify("Episode already downloaded", severity="information")
+            return None
+
+        # Generate filename from episode title
+        safe_title = "".join(c if c.isalnum() or c in " -_" else "_" for c in episode.title)
+        ext = episode.enclosure.split(".")[-1].split("?")[0][:4] or "mp3"
+        filename = f"{safe_title[:50]}.{ext}"
+
+        item = await self.download_queue.add(
+            url=episode.enclosure,
+            filename=filename,
+            episode_id=episode.id,
+        )
+
+        return item
+
+    async def add_to_queue(self, episode: Episode) -> bool:
+        """Add an episode to the playback queue.
+
+        Args:
+            episode: The episode to add.
+
+        Returns:
+            True if added successfully.
+        """
+        if episode.id is None:
+            return False
+
+        from feedback.models import QueueItem
+
+        # Get current queue to determine position
+        queue = await self.database.get_queue()
+        position = len(queue) + 1
+
+        new_item = QueueItem(position=position, episode_id=episode.id)
+        await self.database.save_queue([*queue, new_item])
+
+        return True
 
     def action_toggle_help(self) -> None:
         """Toggle the help overlay."""
