@@ -9,14 +9,7 @@ permissions:
 
 jobs:
   build:
-    strategy:
-      matrix:
-        include:
-          - os: macos-14          # ARM64
-            arch: arm64
-          - os: macos-15-large    # Intel
-            arch: x86_64
-    runs-on: ${{ matrix.os }}
+    runs-on: macos-14  # ARM64 Apple Silicon
     steps:
       - uses: actions/checkout@v4
 
@@ -37,16 +30,16 @@ jobs:
       - name: Create tarball
         run: |
           cd dist
-          tar -czvf feedback-${{ matrix.arch }}-apple-darwin.tar.gz feedback
-          shasum -a 256 feedback-${{ matrix.arch }}-apple-darwin.tar.gz > feedback-${{ matrix.arch }}-apple-darwin.tar.gz.sha256
+          tar -czvf feedback-arm64-apple-darwin.tar.gz feedback
+          shasum -a 256 feedback-arm64-apple-darwin.tar.gz > feedback-arm64-apple-darwin.tar.gz.sha256
 
       - name: Upload to release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh release upload ${{ github.ref_name }} \
-            dist/feedback-${{ matrix.arch }}-apple-darwin.tar.gz \
-            dist/feedback-${{ matrix.arch }}-apple-darwin.tar.gz.sha256
+            dist/feedback-arm64-apple-darwin.tar.gz \
+            dist/feedback-arm64-apple-darwin.tar.gz.sha256
 
   update-homebrew:
     needs: build
@@ -59,13 +52,11 @@ jobs:
           echo "version=${VERSION}" >> $GITHUB_OUTPUT
           echo "version_num=${VERSION#v}" >> $GITHUB_OUTPUT
 
-      - name: Download SHA256 files
+      - name: Download SHA256 file
+        id: sha
         run: |
           curl -sL "https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.version }}/feedback-arm64-apple-darwin.tar.gz.sha256" -o arm64.sha256
-          curl -sL "https://github.com/${{ github.repository }}/releases/download/${{ steps.release.outputs.version }}/feedback-x86_64-apple-darwin.tar.gz.sha256" -o x86_64.sha256
           echo "sha256_arm64=$(cat arm64.sha256 | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
-          echo "sha256_x86_64=$(cat x86_64.sha256 | cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
-        id: sha
 
       - name: Checkout homebrew-tap
         uses: actions/checkout@v4
@@ -79,7 +70,6 @@ jobs:
           VERSION: ${{ steps.release.outputs.version }}
           VERSION_NUM: ${{ steps.release.outputs.version_num }}
           SHA256_ARM64: ${{ steps.sha.outputs.sha256_arm64 }}
-          SHA256_X86_64: ${{ steps.sha.outputs.sha256_x86_64 }}
         run: |
           cat > homebrew-tap/Formula/feedback.rb << EOF
           # typed: false
@@ -91,16 +81,10 @@ jobs:
             version "${VERSION_NUM}"
             license "MIT"
 
-            on_macos do
-              on_arm do
-                url "https://github.com/michellepellon/feedback/releases/download/${VERSION}/feedback-arm64-apple-darwin.tar.gz"
-                sha256 "${SHA256_ARM64}"
-              end
-              on_intel do
-                url "https://github.com/michellepellon/feedback/releases/download/${VERSION}/feedback-x86_64-apple-darwin.tar.gz"
-                sha256 "${SHA256_X86_64}"
-              end
-            end
+            depends_on arch: :arm64
+
+            url "https://github.com/michellepellon/feedback/releases/download/${VERSION}/feedback-arm64-apple-darwin.tar.gz"
+            sha256 "${SHA256_ARM64}"
 
             def install
               bin.install "feedback"
