@@ -1,9 +1,9 @@
 site_name: Feedback
 site_description: A modern TUI podcast client for the terminal
-site_url: https://mpellon.github.io/feedback
+site_url: https://michellepellon.github.io/feedback
 
-repo_name: mpellon/feedback
-repo_url: https://github.com/mpellon/feedback
+repo_name: michellepellon/feedback
+repo_url: https://github.com/michellepellon/feedback
 
 theme:
   name: material
@@ -65,4 +65,4 @@ nav:
 extra:
   social:
     - icon: fontawesome/brands/github
-      link: https://github.com/mpellon/feedback
+      link: https://github.com/michellepellon/feedback

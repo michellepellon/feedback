@@ -238,5 +238,5 @@ feedback  # Will regenerate default config
 
 ## Getting Help
 
-- Report issues: [github.com/mpellon/feedback/issues](https://github.com/mpellon/feedback/issues)
-- Documentation: [mpellon.github.io/feedback](https://mpellon.github.io/feedback)
+- Report issues: [github.com/michellepellon/feedback/issues](https://github.com/michellepellon/feedback/issues)
+- Documentation: [michellepellon.github.io/feedback](https://michellepellon.github.io/feedback)
