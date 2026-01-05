@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, ClassVar
 
+from textual import work
 from textual.binding import Binding
 from textual.containers import Horizontal, Vertical
 from textual.screen import Screen
@@ -351,6 +352,7 @@ class PrimaryScreen(Screen[None]):
             finally:
                 self.app.pop_screen()
 
+    @work(exclusive=True)
     async def action_delete(self) -> None:
         """Delete the selected feed."""
         from feedback.widgets.confirm_dialog import ConfirmDialog
