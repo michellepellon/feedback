@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "feedback"
-version = "0.2.0"
+version = "0.2.1"
 description = "A modern TUI podcast client for the terminal"
 readme = "README.md"
 license = "MIT"

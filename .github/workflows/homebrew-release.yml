@@ -25,7 +25,10 @@ jobs:
 
       - name: Build binary with PyInstaller
         run: |
-          pyinstaller --onefile --name feedback --clean src/feedback/__main__.py
+          pyinstaller --onefile --name feedback --clean \
+            --collect-data feedback \
+            --add-data "src/feedback/styles:feedback/styles" \
+            src/feedback/__main__.py
 
       - name: Create tarball
         run: |
